@@ -13,7 +13,7 @@ class PortScannerApp:
         self.root.title("Port Scanner")
         self.root.geometry("800x520")
         self.root.resizable(False, False)
-        self.root.configure(bg="#fefefe")  # fondclair
+        self.root.configure(bg="#fefefe")
 
         style = ttk.Style()
         style.theme_use("default")
@@ -52,8 +52,8 @@ class PortScannerApp:
         frame = ttk.Frame(self.root, padding=padx)
         frame.pack(fill=tk.X)
 
-        ttk.Label(frame, text="Target:", width=8).grid(row=0, column=0, sticky=tk.W, pady=pady)
-        self.target_entry = ttk.Entry(frame, width=30)
+        ttk.Label(frame, text="Target(s):", width=8).grid(row=0, column=0, sticky=tk.W, pady=pady)
+        self.target_entry = ttk.Entry(frame, width=40)
         self.target_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, padx), pady=pady)
 
         ttk.Label(frame, text="Ports:", width=8).grid(row=0, column=2, sticky=tk.W, pady=pady)
@@ -109,7 +109,12 @@ class PortScannerApp:
         return (port, False, None)
 
     def start_scan(self):
-        target = self.target_entry.get()
+        targets_raw = self.target_entry.get()
+        targets = [t.strip() for t in targets_raw.replace(',', ' ').split() if t.strip()]
+        if not targets:
+            messagebox.showerror("Error", "Please enter at least one target IP or hostname.")
+            return
+
         try:
             start_port = int(self.start_port_entry.get())
             end_port = int(self.end_port_entry.get())
@@ -119,14 +124,11 @@ class PortScannerApp:
             messagebox.showerror("Error", "Please enter a valid port range (1-65535).")
             return
 
-        if not target:
-            messagebox.showerror("Error", "Please enter a target IP or hostname.")
-            return
-
         self.scan_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.output_box.delete(1.0, tk.END)
-        self.progress['maximum'] = end_port - start_port + 1
+        total_ports = len(targets) * (end_port - start_port + 1)
+        self.progress['maximum'] = total_ports
         self.progress['value'] = 0
         self.stop_scan_flag = False
         self.scanned_count = 0
@@ -135,35 +137,40 @@ class PortScannerApp:
 
         def threaded_scan():
             try:
-                ip = socket.gethostbyname(target)
+                for target in targets:
+                    if self.stop_scan_flag:
+                        break
+                    try:
+                        ip = socket.gethostbyname(target)
+                    except socket.gaierror:
+                        self.append_output(f"\nCould not resolve target: {target}\n")
+                        continue
 
-                # Résolution DNS inverse (1 seule fois)
-                try:
-                    reverse_name = socket.gethostbyaddr(ip)[0]
-                    self.append_output(f"Scan target IP: {ip} ({reverse_name})\n\n")
-                except socket.herror:
-                    reverse_name = None
-                    self.append_output(f"Scan target IP: {ip} (No reverse DNS found)\n\n")
+                    try:
+                        reverse_name = socket.gethostbyaddr(ip)[0]
+                        self.append_output(f"\nScanning {target} ({ip} - {reverse_name})\n")
+                    except socket.herror:
+                        self.append_output(f"\nScanning {target} ({ip}) - no reverse DNS\n")
 
-                start_time = datetime.now()
+                    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+                        futures = {executor.submit(self.scan_port, ip, port): port for port in range(start_port, end_port + 1)}
+                        for future in as_completed(futures):
+                            if self.stop_scan_flag:
+                                break
+                            result = future.result()
+                            if result is None:
+                                continue
+                            port, is_open, service = result
+                            self.scanned_count += 1
+                            if is_open:
+                                self.open_count += 1
+                                service_str = service if service else "Unknown"
+                                self.append_output(f"Port {port} is [OPEN] ({service_str})\n")
 
-                with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-                    futures = {executor.submit(self.scan_port, ip, port): port for port in range(start_port, end_port + 1)}
-                    for future in as_completed(futures):
-                        if self.stop_scan_flag:
-                            break
-                        port, is_open, service = future.result()
-                        self.scanned_count += 1
-                        if is_open:
-                            self.open_count += 1
-                            service_str = service if service else "Unknown"
-                            self.append_output(f"Port {port} is [OPEN] ({service_str})\n")
+                            self.update_counts()
+                            self.progress.step(1)
 
-                        self.update_counts()
-                        self.progress.step(1)
-
-                end_time = datetime.now()
-                self.append_output(f"\nScan completed in {end_time - start_time}\n")
+                self.append_output("\nScan completed.\n")
             except Exception as e:
                 messagebox.showerror("Scan Error", str(e))
             finally:
