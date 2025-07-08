@@ -13,11 +13,10 @@ class PortScannerApp:
         self.root.title("Port Scanner")
         self.root.geometry("800x520")
         self.root.resizable(False, False)
-        self.root.configure(bg="#fefefe")  # fond très clair, presque blanc
+        self.root.configure(bg="#fefefe")  # fondclair
 
-        # Style minimaliste flat
         style = ttk.Style()
-        style.theme_use("default")  # thème simple par défaut
+        style.theme_use("default")
 
         style.configure("TButton",
                         font=("Arial", 10),
@@ -102,12 +101,12 @@ class PortScannerApp:
                 if result == 0:
                     try:
                         service = socket.getservbyport(port)
-                    except:
+                    except OSError:
                         service = "Unknown"
-                    return f"Port {port} is [OPEN] ({service})"
+                    return (port, True, service)
         except:
-            return None
-        return None
+            return (port, False, None)
+        return (port, False, None)
 
     def start_scan(self):
         target = self.target_entry.get()
@@ -137,7 +136,14 @@ class PortScannerApp:
         def threaded_scan():
             try:
                 ip = socket.gethostbyname(target)
-                self.append_output(f"Scan target > {ip}\n")
+
+                # Résolution DNS inverse (1 seule fois)
+                try:
+                    reverse_name = socket.gethostbyaddr(ip)[0]
+                    self.append_output(f"Scan target IP: {ip} ({reverse_name})\n\n")
+                except socket.herror:
+                    reverse_name = None
+                    self.append_output(f"Scan target IP: {ip} (No reverse DNS found)\n\n")
 
                 start_time = datetime.now()
 
@@ -146,11 +152,12 @@ class PortScannerApp:
                     for future in as_completed(futures):
                         if self.stop_scan_flag:
                             break
-                        result = future.result()
+                        port, is_open, service = future.result()
                         self.scanned_count += 1
-                        if result:
+                        if is_open:
                             self.open_count += 1
-                            self.append_output(result + '\n')
+                            service_str = service if service else "Unknown"
+                            self.append_output(f"Port {port} is [OPEN] ({service_str})\n")
 
                         self.update_counts()
                         self.progress.step(1)
