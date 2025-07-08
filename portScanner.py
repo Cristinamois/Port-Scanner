@@ -11,42 +11,86 @@ class PortScannerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Port Scanner")
-        self.root.geometry("600x480")
+        self.root.geometry("800x520")
+        self.root.resizable(False, False)
+        self.root.configure(bg="#fefefe")  # fond très clair, presque blanc
+
+        # Style minimaliste flat
+        style = ttk.Style()
+        style.theme_use("default")  # thème simple par défaut
+
+        style.configure("TButton",
+                        font=("Arial", 10),
+                        background="#fefefe",
+                        foreground="#222222",
+                        borderwidth=0,
+                        padding=6)
+        style.map("TButton",
+                  background=[("active", "#eaeaea")],
+                  foreground=[("active", "#000000")])
+
+        style.configure("TLabel",
+                        background="#fefefe",
+                        foreground="#222222",
+                        font=("Arial", 10))
+        style.configure("TEntry",
+                        font=("Arial", 10))
+        style.configure("Horizontal.TProgressbar",
+                        thickness=15,
+                        background="#4a90e2",
+                        troughcolor="#ddd")
 
         self.stop_scan_flag = False
-        self.executor = None
+        self.scanned_count = 0
+        self.open_count = 0
 
         self.build_ui()
 
     def build_ui(self):
-        frame = ttk.Frame(self.root, padding=10)
+        padx = 12
+        pady = 10
+
+        frame = ttk.Frame(self.root, padding=padx)
         frame.pack(fill=tk.X)
 
-        ttk.Label(frame, text="Target:").pack(side=tk.LEFT)
-        self.target_entry = ttk.Entry(frame, width=25)
-        self.target_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Label(frame, text="Target:", width=8).grid(row=0, column=0, sticky=tk.W, pady=pady)
+        self.target_entry = ttk.Entry(frame, width=30)
+        self.target_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, padx), pady=pady)
 
-        ttk.Label(frame, text="Ports:").pack(side=tk.LEFT)
-        self.start_port_entry = ttk.Entry(frame, width=5)
+        ttk.Label(frame, text="Ports:", width=8).grid(row=0, column=2, sticky=tk.W, pady=pady)
+        self.start_port_entry = ttk.Entry(frame, width=6)
         self.start_port_entry.insert(0, "1")
-        self.start_port_entry.pack(side=tk.LEFT)
+        self.start_port_entry.grid(row=0, column=3, sticky=tk.W, padx=(0, 5), pady=pady)
 
-        ttk.Label(frame, text="to").pack(side=tk.LEFT)
-        self.end_port_entry = ttk.Entry(frame, width=5)
+        ttk.Label(frame, text="to", width=3, anchor=tk.CENTER).grid(row=0, column=4, pady=pady)
+        self.end_port_entry = ttk.Entry(frame, width=6)
         self.end_port_entry.insert(0, "1024")
-        self.end_port_entry.pack(side=tk.LEFT)
+        self.end_port_entry.grid(row=0, column=5, sticky=tk.W, padx=(0, padx), pady=pady)
 
         self.scan_button = ttk.Button(frame, text="Start Scan", command=self.start_scan)
-        self.scan_button.pack(side=tk.LEFT, padx=10)
+        self.scan_button.grid(row=0, column=6, sticky=tk.E, padx=(0, padx), pady=pady)
 
         self.stop_button = ttk.Button(frame, text="Stop Scan", command=self.stop_scan, state=tk.DISABLED)
-        self.stop_button.pack(side=tk.LEFT)
+        self.stop_button.grid(row=0, column=7, sticky=tk.E, pady=pady)
 
-        self.progress = ttk.Progressbar(self.root, orient=tk.HORIZONTAL, length=580, mode='determinate')
-        self.progress.pack(padx=10, pady=10)
+        count_frame = ttk.Frame(self.root, padding=(padx, 0))
+        count_frame.pack(fill=tk.X)
 
-        self.output_box = tk.Text(self.root, wrap=tk.WORD, height=20)
-        self.output_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.scanned_label = ttk.Label(count_frame, text="Ports scanned: 0")
+        self.scanned_label.pack(side=tk.LEFT, padx=(0, 25), pady=(0, pady))
+
+        self.open_label = ttk.Label(count_frame, text="Ports open: 0")
+        self.open_label.pack(side=tk.LEFT, pady=(0, pady))
+
+        self.progress = ttk.Progressbar(self.root, orient=tk.HORIZONTAL, length=610, mode='determinate', style="Horizontal.TProgressbar")
+        self.progress.pack(padx=padx, pady=15)
+
+        self.output_box = tk.Text(self.root, wrap=tk.WORD, height=20, font=("Consolas", 10), bg="#ffffff", fg="#111111", relief=tk.FLAT, bd=0)
+        self.output_box.pack(fill=tk.BOTH, expand=True, padx=padx, pady=(0, padx))
+
+        scrollbar = ttk.Scrollbar(self.output_box, command=self.output_box.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.output_box.config(yscrollcommand=scrollbar.set)
 
     def scan_port(self, ip, port):
         if self.stop_scan_flag:
@@ -86,6 +130,9 @@ class PortScannerApp:
         self.progress['maximum'] = end_port - start_port + 1
         self.progress['value'] = 0
         self.stop_scan_flag = False
+        self.scanned_count = 0
+        self.open_count = 0
+        self.update_counts()
 
         def threaded_scan():
             try:
@@ -100,9 +147,14 @@ class PortScannerApp:
                         if self.stop_scan_flag:
                             break
                         result = future.result()
+                        self.scanned_count += 1
                         if result:
+                            self.open_count += 1
                             self.append_output(result + '\n')
+
+                        self.update_counts()
                         self.progress.step(1)
+
                 end_time = datetime.now()
                 self.append_output(f"\nScan completed in {end_time - start_time}\n")
             except Exception as e:
@@ -112,6 +164,10 @@ class PortScannerApp:
                 self.stop_button.config(state=tk.DISABLED)
 
         threading.Thread(target=threaded_scan, daemon=True).start()
+
+    def update_counts(self):
+        self.root.after(0, lambda: self.scanned_label.config(text=f"Ports scanned: {self.scanned_count}"))
+        self.root.after(0, lambda: self.open_label.config(text=f"Ports open: {self.open_count}"))
 
     def stop_scan(self):
         self.stop_scan_flag = True
